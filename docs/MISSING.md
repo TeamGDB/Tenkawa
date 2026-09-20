@@ -6,33 +6,26 @@ Platform for everything below: macOS on Apple Silicon, Vulkan through MoltenVK.
 
 ## Where the port is
 
-**The game draws.** It starts, loads, runs its threads, reads its data off the disc, sets up audio, and puts its own start-up screens on the screen, correctly: the clock-frequency notice ("The clock frequency for the PSP system in use is 222 MHz"), then the memory-stick check ("Checking Memory Stick. Please do not turn off power."). Text, the rounded panel, the gradient and the 2D path all work, and a gamepad is read. Captures are not kept here, because captures made from the game's own assets do not belong in this repository.
+**The game boots to its opening screens and loads its data.** It starts, runs its threads, reads the disc, sets up audio, draws its clock-frequency notice, takes a button press, runs its memory-stick check, and then opens and streams the files it needs. With the recompiled corpus linked it holds **30 frames per second at 100% speed**.
 
-It stops on the memory-stick screen and stays there. It is not deadlocked and it is not slow: with the recompiled corpus linked it holds **30 frames per second at 100% speed, 0.9 ms of guest time per frame**, polling the pad and all four utility dialogs every frame, which is what its dialog manager does. It never touches `ms0:` at all — so it is stuck *before* the check it is telling you about.
+It was not stuck before; it was waiting, and three things were in the way. They are worth writing down in order, because the first one cost a day and was not a missing system call at all.
 
-The interpreter reaches exactly the same place, which is worth knowing: everything below was found without waiting for the recompile.
+**1. It was waiting for the player.** The screen it sits on is the game's own message box — the clock-frequency notice, with the yellow "next page" triangle in the corner. Its scene is a three-state machine whose handler table is at `0x08A804D0`: state 0 plays a twenty-frame fade-in, **state 1 (`0x08a2f688`) reads the pad and does nothing at all until the confirm button is pressed**, state 2 leaves. Behind that scene, a disc-check module the game loads from `disc0:/sce_lbn0xec21_size0x2480` and runs at `0x08A81660` waits for the scene to finish (`0x08a2f9dc` is "state == -1"), which is what made everything downstream look frozen.
 
-What it stops on is a pair of `umd1:` device commands the framework does not implement. The sequence is:
+Nobody had pressed a button. `TENKAWA_INPUT_SCRIPT="600:pad a;700:pad a"` gets past it.
 
-```
-[io] open disc0:/sce_lbn0xec26_size0x4A0 flags=0x40000001 -> 0x00000007
-[io] ioctl fd=7 ... cmd=0x04100001 in=16 bytes:
-     31 C2 91 BB 31 AC 79 F0 71 35 18 22 21 60 D8 C8 (unhandled, returning 0)
-[io] devctl umd1: cmd=0x01F300A5 in=16 out=4 sent: 00 00 00 00 27 EC 00 00 00 00 00 00 13 00 00 00
-[io] devctl umd1: cmd=0x01F300A7 in=4 out=0 sent: 00 00 00 00
-```
+**2. `sceUtilitySavedata` mode 22, GETSIZE.** Past the notice the game runs its memory-stick check and asks GETSIZE for `ULES01456`/`DAT0`, `DAT1` and `DAT2`. The framework answered a parameter error for every mode it did not implement, and the game put up a message dialog and stayed there. It is answered now, from the same three size blocks SIZES uses.
 
-The file it opens is PGD-encrypted — it begins `\0PGD`, the flag `0x40000000` says so, and the sixteen bytes are its key. **That format is now fully worked out and verified** ([PortableKit#17](https://github.com/TeamGDB/PortableKit/issues/17)), including a check against a 628 MB sibling on the same disc whose plaintext inflates with a valid CRC32.
+**3. Neither of the two things this looked like.** Both of the earlier conclusions were wrong, and both were expensive:
 
-But decrypting it would change nothing today, and this is worth stating plainly because it was my first conclusion and it was wrong: **the game never reads that file.** Three experiments, each changing one return value, say where it actually waits:
+- The PGD file the game opens was fully worked out and verified ([PortableKit#17](https://github.com/TeamGDB/PortableKit/issues/17)) — and the game never reads it. The module opens it, hands the driver a key through `sceIoIoctl` command `0x04100001`, closes it again, and that is the whole check.
+- The `umd1:` device commands `0x01F300A5`/`0x01F300A7` ([PortableKit#19](https://github.com/TeamGDB/PortableKit/issues/19)) are a read-ahead, and answering them changes nothing: the game reads a zero result from the second one as "finished", which is what the framework already returned. Byte for byte the same run with and without them.
 
-| Experiment | What the game did |
-| --- | --- |
-| `sceIoIoctl` returns an error | Gave up on the handle and reopened the file in a tight loop — so it reads the result |
-| `devctl 0x01F300A5` returns an error | Never called `0x01F300A7` at all — so the two are a sequence |
-| Both succeed, but nothing written to A5's 4-byte output | Passed *those same four zero bytes* to A7 — so A5 returns a handle and A7 consumes it |
+### Where it gets to now
 
-So the blocker is [PortableKit#19](https://github.com/TeamGDB/PortableKit/issues/19): what `0x01F300A5` should put in those four bytes, and what `0x01F300A7` does with it. The game reacts visibly to each of these, which makes it unusually cheap to probe.
+After two presses it reads the gzip stream at `sce_lbn0xec27` — the range the read-ahead asks for — re-opens the PGD file three more times, opens `sce_lbn0xec3d`, `sce_lbn0xec5b` and `sce_lbn0xed2a`, starts ATRAC through `sceAtracGetAtracID`, `sceAtracLowLevelInitDecoder` and `sceAtracLowLevelDecode`, and streams `sce_lbn0x3eb50_size0x13E790` in 608-byte pieces for as long as it is left running. The three ATRAC calls are logging stubs, so it is being fed silence.
+
+**Not verified:** what is on the screen after the notice. Frame capture wrote nothing in any run on this machine — `capture_frame` reports it cannot capture, and the window capture produces no file either — and it does the same on the framework commit before this work, so it is not caused by it. Everything above is read from the I/O trace and from the game's own code, not from a picture. Somebody with a working capture should look.
 
 ## What the game asks of the GE
 
@@ -76,7 +69,7 @@ Nine framework calls and two framework fixes, each one found by running the game
 | `sceNetAdhocMatching` (11 of 11) | `Init`, `Term`, `Create`, `Delete`, `Start`, `Stop`, `SelectTarget`, `CancelTargetWithOpt`, `SetHelloOpt`, `SendData`, `AbortSendData` | The whole peer-matching library. The first port's game did its own matchmaking over `sceNetAdhocctl` and never touched it. [PortableKit#9](https://github.com/TeamGDB/PortableKit/issues/9) |
 | `sceSasCore` (9 of 27) | `__sceSasSetADSR`, `SetADSRmode`, `SetSL`, `SetGrain`, `GetGrain`, `SetNoise`, `SetOutputmode`, `GetAllEnvelopeHeights`, `GetPauseFlag` | The mixer's envelope, grain and noise control. The game calls `GetAllEnvelopeHeights` during start-up. [PortableKit#7](https://github.com/TeamGDB/PortableKit/issues/7) |
 | `sceUtility` (6 of 21) | The five `sceUtilityGamedataInstall*` calls, and `sceUtilityGetSystemParamString` | The shell's data-install dialog. [PortableKit#10](https://github.com/TeamGDB/PortableKit/issues/10) |
-| `sceAtrac3plus` (4 of 5) | `sceAtracLowLevelInitDecoder`, `sceAtracLowLevelDecode`, `sceAtracGetAtracID`, `sceAtracReinit` | This game feeds the decoder raw frames rather than handing it a file. It calls `sceAtracReinit` during start-up. [PortableKit#8](https://github.com/TeamGDB/PortableKit/issues/8) |
+| `sceAtrac3plus` (4 of 5) | `sceAtracLowLevelInitDecoder`, `sceAtracLowLevelDecode`, `sceAtracGetAtracID`, `sceAtracReinit` | This game feeds the decoder raw frames rather than handing it a file. **All four are now called** — the first three as soon as it gets past its opening screens — so this is the next thing in the way. [PortableKit#8](https://github.com/TeamGDB/PortableKit/issues/8) |
 | `sceNetAdhocctl` (4 of 12) | `Connect`, `Join`, `GetState`, `GetPeerInfo` | Joining and creating a group |
 | `ThreadManForUser` (3 of 31) | `sceKernelWaitSemaCB`, `sceKernelWaitThreadEnd`, `sceKernelWaitThreadEndCB` | The callback-polling forms of waits that do exist |
 | `sceUmdUser` (3 of 5) | `sceUmdRegisterUMDCallBack`, `UnRegister…`, `sceUmdWaitDriveStatCB` | Disc-change callbacks. The game registers one during start-up |
@@ -117,4 +110,4 @@ The game writes `ms0:/PSP/SAVEDATA/ULES01456/…` and `ULES01456INST/DATAINST.BI
 - Anything on Linux or Windows. Everything here is macOS on Apple Silicon.
 - Speed. The game's frame loop advances, but it draws nothing, so the numbers mean nothing yet. Guest time ran about 20,000x faster than real time in a headless run, which is what a loop with no work in it and no renderer to throttle it looks like.
 - The ad hoc product code in the profile is a guess; the game's own is not known.
-- That the game has no code overlays. The profile declares none, on the grounds that nothing has suggested otherwise, which is not the same as having looked.
+- That the game has no code overlays. The profile declares none. It does, however, load and run **one module off the disc at run time**: `disc0:/sce_lbn0xec21_size0x2480` is a PSP ELF with a fixed load address of `0x08A81660`, and the game reads its header, its one program header and its 9072 bytes by hand and jumps into it. The recompiler never sees it, so it runs interpreted; that is correct and costs nothing, but it is not the same as "no overlays".
