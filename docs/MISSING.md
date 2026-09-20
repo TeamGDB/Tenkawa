@@ -62,15 +62,20 @@ Of these, only four are known to be called at all so far: `sceImposeSetUMDPopup`
 
 ## 2. The recompiler
 
-The whole executable recompiles: 8579 function seeds, 488049 code addresses, 153 C++ units, in about two and a half minutes. **435 of those 488049 addresses could not be lowered**, which is 0.09%. They are reached, if at all, through the interpreter, so they are not fatal — but each one is a place where a recompiled run silently becomes an interpreted one.
+**The whole executable now lowers.** 8579 function seeds, 488049 code addresses, 153 C++ units, in about two and a half minutes. The only sites the recompiler cannot lower are the game's own 41 `break` instructions, which are its assertion traps and are correct as they are.
 
-| Category | Sites | What they are |
+It did not start that way. 435 sites came out unsupported, and one of them — `0xD03CA084` at `0x0882EAD4` — is where the port stopped, because the interpreter could not execute it either. They turned out to be six distinct instructions, all now implemented in the framework:
+
+| Instruction | Sites | What it does |
 | --- | --- | --- |
-| `vfpu4 not lowered yet` | 390 | 24 distinct instruction words. **`0xD03CA084` is where the port stops today**, at 0x0882EAD4, on one site. `0xD0210000` accounts for 359 sites through 0x08882C00–0x088FB344 and is certain to be next. The rest are two small families, `0xD03Fxxxx` (22 sites) and `0xD05Bxxxx` (8). In the decoder's fields these are group 1: the conversion family, just past the `vuc2i`/`vc2i`/`vus2i`/`vs2i` entries it already has |
-| `guest break trap` | 41 | `break` instructions: the game's own assertion traps. Correct as they are |
-| `unknown not lowered yet` | 4 | All four are `addi` (opcode 0x08), the trapping add-immediate. The recompiler lowers `addiu` but not this |
+| `vrndi` | 359 | A random 32-bit pattern per element |
+| `vi2s` | 16 | The top halfword of each element, two per destination word |
+| `vt5650` | 8 | Packed 8888 colours to 5650 |
+| `vi2uc` | 6 | A quad of integers to four bytes — **the one the port stopped on** |
+| `vrndf1` | 1 | A random float in [1, 2) |
+| `addi` | 4 | Add immediate. `addiu` was lowered; this was not |
 
-The VFPU words need decoding against the hardware reference before anything is implemented; they are recorded here as words, not as guesses at what they do.
+One of those is not faithful and is worth knowing about. The VFPU's random generator keeps its state in the control registers RCX0..RCX7, and the PSP's own sequence is not documented anywhere this project can use, so the framework substitutes its own: deterministic, and explicitly not what hardware produces. This game draws from it 359 times and never calls `vrnds` to seed it, so whatever the framework starts with decides every one of those draws. Expect anything driven by it — scattering, timing jitter, idle animation — to differ from a PSP. It will not fail; it will look different.
 
 ## 3. Graphics
 
