@@ -8,7 +8,9 @@ Platform for everything below: macOS on Apple Silicon, Vulkan through MoltenVK.
 
 **The game boots to its opening screens and loads its data.** It starts, runs its threads, reads the disc, sets up audio, draws its clock-frequency notice, takes a button press, runs its memory-stick check, and then opens and streams the files it needs. With the recompiled corpus linked its frame loop holds **30 frames per second at 100% speed**.
 
-**But only the corpus-free build draws.** Captured from the interpreter: the clock-frequency notice with its "next page" triangle, then "Checking Memory Stick. Please do not turn off power.", then a white screen it stays on while it loads. The recompiled build executes **one display list in a whole run** where the interpreter executes one per frame, so it presents nothing and its window is black. That is [PortableKit#20](https://github.com/TeamGDB/PortableKit/issues/20) and it is the thing to fix before anything else here can be judged by looking at it. An earlier note in this file said the game draws with the corpus linked; that was the frame loop running, not the drawing.
+**It reaches its title screen.** Captured from the corpus-free build, in order: the clock-frequency notice with its "next page" triangle, "Checking Memory Stick. Please do not turn off power." after the confirm button, a white screen while it loads, and then the title — the logo, the four characters, the dragon balls, the two copyright lines and a blinking "Press START button". Everything on it is drawn correctly: gradients, outlined text, the alpha on the blinking prompt. No captures are kept in this repository, because they are made from the game's own art.
+
+**Only the corpus-free build draws.** The recompiled build executes **one display list in a whole run** where the interpreter executes one per frame, so it presents nothing and its window is black. That is [PortableKit#20](https://github.com/TeamGDB/PortableKit/issues/20) and it is the thing to fix before anything else here can be judged by looking at it. An earlier note in this file said the game draws with the corpus linked; that was the frame loop running, not the drawing.
 
 It was not stuck before; it was waiting, and three things were in the way. They are worth writing down in order, because the first one cost a day and was not a missing system call at all.
 
@@ -27,7 +29,9 @@ Nobody had pressed a button. `TENKAWA_INPUT_SCRIPT="600:pad a;700:pad a"` gets p
 
 After two presses it reads the gzip stream at `sce_lbn0xec27` — the range the read-ahead asks for — re-opens the PGD file three more times, opens `sce_lbn0xec3d`, `sce_lbn0xec5b` and `sce_lbn0xed2a`, starts ATRAC through `sceAtracGetAtracID`, `sceAtracLowLevelInitDecoder` and `sceAtracLowLevelDecode`, and streams `sce_lbn0x3eb50_size0x13E790` in 608-byte pieces for as long as it is left running. The three ATRAC calls are logging stubs, so it is being fed silence.
 
-**Not verified:** whether it ever leaves the white screen. Under the interpreter the load runs about twenty times slower than the game expects, and the recompiled build, which would load it in seconds, draws nothing ([PortableKit#20](https://github.com/TeamGDB/PortableKit/issues/20)). What the white screen becomes is unknown.
+Under the interpreter the white screen lasts about 1100 frames, because the load runs about twenty times slower than the game expects. The recompiled build, which would load it in seconds, draws nothing.
+
+**Not verified:** anything past the title screen; whether START is accepted; sound, which is silent because the low-level ATRAC decode is a stub; and the title screen on the recompiled build, for the reason above.
 
 ## What the game asks of the GE
 
