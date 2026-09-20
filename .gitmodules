@@ -1,0 +1,4 @@
+[submodule "portablekit"]
+	path = portablekit
+	url = git@github.com:TeamGDB/PortableKit.git
+	branch = extract-framework
