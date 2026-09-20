@@ -10,18 +10,16 @@ It is built on [PortableKit](https://github.com/TeamGDB/PortableKit), the shared
 
 ## Status
 
-The game does not run yet.
+The game runs. It has not drawn anything yet.
 
-What works: the installer accepts the disc image, checks it and decrypts the game's executable; the executable loads; `module_start` runs. What does not: everything after that. The game has not created its own main thread, drawn a frame or made a sound.
-
-What is measured so far:
+It installs from a disc image, recompiles whole, loads, creates its threads, reaches its frame loop and advances through it, reads its data off the disc and sets up audio — with no deadlock and no thread starving the others. What it has not done is put a pixel on screen.
 
 | | |
 | --- | --- |
 | Imports the game makes | 228, from 25 libraries |
-| Of those, with no implementation | 71 |
-| Recompiled | the whole executable: 8579 functions, 488049 addresses, 153 C++ units |
-| Addresses the recompiler could not lower | 435, or 0.09% — mostly one VFPU instruction |
+| Of those, with no implementation | 45 — run with `TENKAWA_LIST_STUBS=1` to see them |
+| Recompiled | 8579 functions, 488049 addresses, 153 C++ units |
+| Addresses the recompiler cannot lower | the game's own 41 `break` traps, and nothing else |
 
 [`docs/MISSING.md`](docs/MISSING.md) is the list, most blocking first, and the [issues](https://github.com/TeamGDB/Tenkawa/issues) are the work.
 
