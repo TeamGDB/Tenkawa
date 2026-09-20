@@ -6,25 +6,43 @@ Platform for everything below: macOS on Apple Silicon, Vulkan through MoltenVK.
 
 ## Where the port is
 
-The game's executable is prepared from the disc image, loaded and started. `module_start` runs, the game creates its own threads, and it reaches its frame loop and advances through it: 191,823,988 vblanks in a 150-second run.
-
-It then stops making progress in a very specific way. Traced with `TENKAWA_TRACE_IO=1`:
+The game starts, loads, and runs. `module_start` runs, the game creates its threads, reaches its frame loop and advances through it, reads its data off the disc, sets up audio, and keeps going with no deadlock and no starvation. A thread dump partway in looks like a working game:
 
 ```
-[io] getstat disc0:/PSP_GAME/USRDIR/PACKFILE.BIN -> 0x00000000
-[io] open umd1: flags=0x00000001 -> 0x00000003
-[io] lseek fd=3 umd1: -> 56048
-[io] open umd1: flags=0x00000001 -> 0x00000004
-...
+threads (virtual time 133 ms, vblanks 8):
+  uid=258  prio=0x0000003D running  pc=0x0881A250
+  uid=269  prio=0x00000043 waiting  wait=mailbox object=267 deadline=168ms pc=0x08831C8C
+  uid=280  prio=0x00000010 waiting  wait=delay   object=0   deadline=156ms pc=0x0883E554
 ```
 
-Three and a half million times in two minutes, never closing one. The game reads its data through the raw UMD device, and the framework's I/O layer has no answer for a disc device opened with no path — the first port's game used `sce_lbn` pseudo-paths instead. **This is the single thing now between this port and doing something visible**, and it is [TeamGDB/PortableKit#15](https://github.com/TeamGDB/PortableKit/issues/15).
+It stops on **a VFPU instruction neither the recompiler nor the interpreter can execute**:
 
-Five calls were implemented in the framework to get this far, each one found by running the game and reading the last unimplemented call before it stopped: `sceKernelExtendThreadStack`, the lightweight mutexes, `sceKernelCheckThreadStack`, `sceKernelMemcpy`, and the three `sceDisplayWaitVblankStart` forms with `sceDisplayGetVcount`. None of them mentions this game; they are all things the first port's game happened not to need.
+```
+Runtime stopped: Unsupported Allegrex instruction 0xD03CA084 at 0x0882EAD4: vfpu4 not lowered yet
+```
+
+That is [TeamGDB/PortableKit#3](https://github.com/TeamGDB/PortableKit/issues/3), and it is now the blocker. Nothing has been drawn yet, so there is still nothing to screenshot.
+
+### What has been implemented to get here
+
+Nine framework calls and two framework fixes, each one found by running the game and reading what it stopped on. None of them mentions this game:
+
+| What | Why it was in the way |
+| --- | --- |
+| `sceKernelExtendThreadStack` | Must call the function it is given; stubbed, `module_start` returned without creating the game's main thread |
+| Lightweight mutexes (create/delete, lock/unlock) | Used throughout start-up |
+| `sceKernelCheckThreadStack` | Returning 0 says the stack is exhausted, and the game believes it |
+| `sceKernelMemcpy` | Returning without copying corrupts what was to be copied |
+| `sceDisplayWaitVblankStart` ×3, `sceDisplayGetVcount` | Nothing paced the frame loop, so it spun |
+| Raw disc device, in sectors | The game reads `PACKFILE.BIN` straight off the disc |
+| Kernel mailboxes | Created during start-up; the kernel had no such primitive |
+| `sceAudioOutput2*`, `sceAudioOutputBlocking` | The audio thread runs at priority 0x10; not blocking starved the other two |
+| User partition sized from guest RAM | The stack landed outside RAM on a 32 MiB console |
+| Module info without section names | No imports at all, so no HLE at all |
 
 ## 1. System calls the game makes that are not implemented
 
-The game imports **228 functions from 25 libraries. 60 of them still have no implementation** and are bound to a logging stub that prints the call once and returns 0. A stub that returns 0 is a lie, and the game acts on it, so these are the first thing to work through.
+The game imports **228 functions from 25 libraries. 49 of them still have no implementation** and are bound to a logging stub that prints the call once and returns 0. A stub that returns 0 is a lie, and the game acts on it, so these are the first thing to work through.
 
 The rest, by area. What has been implemented has been taken out of these tables, so what is left is what is left.
 
@@ -32,16 +50,15 @@ The rest, by area. What has been implemented has been taken out of these tables,
 
 | Library | Missing | Why it matters |
 | --- | --- | --- |
-| `IoFileMgrForUser` | Opening a disc device with no path, and `sceIoIoctl` | **The current blocker.** See above |
-| `ThreadManForUser` (8 of 31) | `sceKernelCreateMbx`, `DeleteMbx`, `SendMbx`, `PollMbx`, `ReceiveMbxCB`; `sceKernelWaitThreadEnd`, `…EndCB`; `sceKernelWaitSemaCB` | Mailboxes are a whole IPC primitive the framework does not have. The `…CB` variants are the callback-polling forms of waits that do exist |
+| `ThreadManForUser` (3 of 31) | `sceKernelWaitThreadEnd`, `…EndCB`, `sceKernelWaitSemaCB` | The callback-polling forms of waits that do exist |
 | `UtilsForUser` (3 of 7) | `sceKernelDcacheWritebackAll`, `…InvalidateAll`, `…Range` | No-ops on this host, but the game calls them before handing buffers to the GE, so they must at least return |
+| `IoFileMgrForUser` (1 of 9) | `sceIoIoctl` | The other half of raw UMD access. Not reached yet |
 
 ### Audio
 
 | Library | Missing | Notes |
 | --- | --- | --- |
 | `sceSasCore` (13 of 27) | `__sceSasSetADSR`, `SetADSRmode`, `SetSL`, `GetEnvelopeHeight`, `GetAllEnvelopeHeights`, `SetGrain`, `GetGrain`, `SetNoise`, `SetOutputmode`, `SetVoicePCM`, `SetPause`, `GetPauseFlag`, `CoreWithMix`, and the four `__sceSasRev*` reverb calls | The mixer's envelope, grain, noise and reverb control. The first port never used them; this game drives all of it |
-| `sceAudio` (4 of 12) | `sceAudioOutput2Reserve`, `…OutputBlocking`, `…Release`, `sceAudioOutputBlocking` | The Output2 single-channel streaming path, which the framework does not implement at all |
 | `sceAtrac3plus` (4 of 5) | `sceAtracLowLevelInitDecoder`, `sceAtracLowLevelDecode`, `sceAtracGetAtracID`, `sceAtracReinit` | This game feeds the decoder raw frames itself instead of handing it a file, which is a different path through ATRAC3 than the one that exists |
 
 ### Video
@@ -73,7 +90,7 @@ The whole executable recompiles: 8579 function seeds, 488049 code addresses, 153
 
 | Category | Sites | What they are |
 | --- | --- | --- |
-| `vfpu4 not lowered yet` | 390 | 24 distinct instruction words, of which one, `0xD0210000`, accounts for 359 sites spread through 0x08882C00–0x088FB344. The others are two small families, `0xD03Fxxxx` (22 sites) and `0xD05Bxxxx` (8) |
+| `vfpu4 not lowered yet` | 390 | 24 distinct instruction words. **`0xD03CA084` is where the port stops today**, at 0x0882EAD4, on one site. `0xD0210000` accounts for 359 sites through 0x08882C00–0x088FB344 and is certain to be next. The rest are two small families, `0xD03Fxxxx` (22 sites) and `0xD05Bxxxx` (8). In the decoder's fields these are group 1: the conversion family, just past the `vuc2i`/`vc2i`/`vus2i`/`vs2i` entries it already has |
 | `guest break trap` | 41 | `break` instructions: the game's own assertion traps. Correct as they are |
 | `unknown not lowered yet` | 4 | All four are `addi` (opcode 0x08), the trapping add-immediate. The recompiler lowers `addiu` but not this |
 
@@ -81,7 +98,7 @@ The VFPU words need decoding against the hardware reference before anything is i
 
 ## 3. Graphics
 
-**Still not known.** The game reaches its frame loop but has not submitted a display list, because it never gets its data off the disc. Nothing can be said about what it asks of the GE until it does, and this section stays empty rather than being filled with guesses.
+**Still not known.** The game now reads its data and runs its threads, but it stops on the VFPU instruction above before submitting a display list. Nothing can be said about what it asks of the GE until it draws, and this section stays empty rather than being filled with guesses.
 
 ## 4. Save data
 
