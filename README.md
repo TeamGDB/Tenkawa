@@ -6,16 +6,39 @@ It is built on [PortableKit](https://github.com/TeamGDB/PortableKit), the shared
 
 > **This project does not include any game assets.** You must provide the files from your own legally obtained copy of Dragon Ball Z: Tenkaichi Tag Team to install or build Tenkawa.
 
+> It is not an emulator in the sense of a JIT or an interpreter at the heart of it. There *is* an interpreter, and early in a port's life it does the work: it runs the game before any of its code has been recompiled, which is how you find out what the game needs without waiting hours for a recompile first.
+
 ## Status
 
-Nothing works yet. This repository is the starting point.
+The game does not run yet.
 
-## What this port needs
+What works: the installer accepts the disc image, checks it and decrypts the game's executable; the executable loads; `module_start` runs. What does not: everything after that. The game has not created its own main thread, drawn a frame or made a sound.
 
-- The game's executable and any runtime code overlays, recompiled ahead of time.
-- The system calls this game makes, which are not the same set another game makes.
-- Whatever it asks of the graphics hardware that no earlier port needed.
-- Its save format, its ad hoc multiplayer, and its own quirks.
+What is measured so far:
+
+| | |
+| --- | --- |
+| Imports the game makes | 228, from 25 libraries |
+| Of those, with no implementation | 71 |
+| Recompiled | the whole executable: 8579 functions, 488049 addresses, 153 C++ units |
+| Addresses the recompiler could not lower | 435, or 0.09% — mostly one VFPU instruction |
+
+[`docs/MISSING.md`](docs/MISSING.md) is the list, most blocking first, and the [issues](https://github.com/TeamGDB/Tenkawa/issues) are the work.
+
+## How the port is built
+
+This repository is a **profile**: one file of constants describing the game, and a four-line `CMakeLists.txt`. Everything else — the recompiler, the kernel, the system modules, the Vulkan renderer, audio, save data, ad hoc networking, the interface and the installer — is [PortableKit](https://github.com/TeamGDB/PortableKit), included here as a submodule.
+
+```bash
+git clone --recursive https://github.com/TeamGDB/Tenkawa.git
+cd Tenkawa
+cmake -S . -B out -G Ninja
+cmake --build out -j2
+out/bin/TenkawaNative --install /path/to/your/image.iso
+out/bin/TenkawaNative
+```
+
+Keep `-j` low: each recompiled unit needs more than a gigabyte to compile. PortableKit's [`docs/BUILDING.md`](https://github.com/TeamGDB/PortableKit/blob/main/docs/BUILDING.md) explains where the time goes, and [`docs/BRINGING_UP_A_GAME.md`](https://github.com/TeamGDB/PortableKit/blob/main/docs/BRINGING_UP_A_GAME.md) explains how to work on a port that does not run yet.
 
 ## Legal disclaimer
 
