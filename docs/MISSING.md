@@ -12,16 +12,27 @@ It stops on the memory-stick screen and stays there. It is not deadlocked and it
 
 The interpreter reaches exactly the same place, which is worth knowing: everything below was found without waiting for the recompile.
 
-What it stops on is **a PGD-encrypted file on the disc**, and the evidence is exact:
+What it stops on is a pair of `umd1:` device commands the framework does not implement. The sequence is:
 
 ```
 [io] open disc0:/sce_lbn0xec26_size0x4A0 flags=0x40000001 -> 0x00000007
 [io] ioctl fd=7 ... cmd=0x04100001 in=16 bytes:
      31 C2 91 BB 31 AC 79 F0 71 35 18 22 21 60 D8 C8 (unhandled, returning 0)
 [io] devctl umd1: cmd=0x01F300A5 in=16 out=4 sent: 00 00 00 00 27 EC 00 00 00 00 00 00 13 00 00 00
+[io] devctl umd1: cmd=0x01F300A7 in=4 out=0 sent: 00 00 00 00
 ```
 
-Reading those sectors out of the disc image says what they are: LBA `0xEC21` is an ELF, LBA `0xEC26` begins `\0PGD`, and LBA `0xEC27` is gzip. The file is opened with the encrypted-file flag and the sixteen bytes are its key; the framework implements none of that, so the ioctl returns success and a read would hand the game ciphertext. That is [TeamGDB/PortableKit#17](https://github.com/TeamGDB/PortableKit/issues/17), and it is the whole of what stands between this port and its title screen.
+The file it opens is PGD-encrypted — it begins `\0PGD`, the flag `0x40000000` says so, and the sixteen bytes are its key. **That format is now fully worked out and verified** ([PortableKit#17](https://github.com/TeamGDB/PortableKit/issues/17)), including a check against a 628 MB sibling on the same disc whose plaintext inflates with a valid CRC32.
+
+But decrypting it would change nothing today, and this is worth stating plainly because it was my first conclusion and it was wrong: **the game never reads that file.** Three experiments, each changing one return value, say where it actually waits:
+
+| Experiment | What the game did |
+| --- | --- |
+| `sceIoIoctl` returns an error | Gave up on the handle and reopened the file in a tight loop — so it reads the result |
+| `devctl 0x01F300A5` returns an error | Never called `0x01F300A7` at all — so the two are a sequence |
+| Both succeed, but nothing written to A5's 4-byte output | Passed *those same four zero bytes* to A7 — so A5 returns a handle and A7 consumes it |
+
+So the blocker is [PortableKit#19](https://github.com/TeamGDB/PortableKit/issues/19): what `0x01F300A5` should put in those four bytes, and what `0x01F300A7` does with it. The game reacts visibly to each of these, which makes it unusually cheap to probe.
 
 ## What the game asks of the GE
 
