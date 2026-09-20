@@ -6,24 +6,35 @@ Platform for everything below: macOS on Apple Silicon, Vulkan through MoltenVK.
 
 ## Where the port is
 
-The game's executable is prepared from the disc image, loaded, and started. `module_start` runs. The port has not yet reached the game's own main thread.
+The game's executable is prepared from the disc image, loaded and started. `module_start` runs, the game creates its own threads, and it reaches its frame loop and advances through it: 191,823,988 vblanks in a 150-second run.
+
+It then stops making progress in a very specific way. Traced with `TENKAWA_TRACE_IO=1`:
+
+```
+[io] getstat disc0:/PSP_GAME/USRDIR/PACKFILE.BIN -> 0x00000000
+[io] open umd1: flags=0x00000001 -> 0x00000003
+[io] lseek fd=3 umd1: -> 56048
+[io] open umd1: flags=0x00000001 -> 0x00000004
+...
+```
+
+Three and a half million times in two minutes, never closing one. The game reads its data through the raw UMD device, and the framework's I/O layer has no answer for a disc device opened with no path — the first port's game used `sce_lbn` pseudo-paths instead. **This is the single thing now between this port and doing something visible**, and it is [TeamGDB/PortableKit#15](https://github.com/TeamGDB/PortableKit/issues/15).
+
+Five calls were implemented in the framework to get this far, each one found by running the game and reading the last unimplemented call before it stopped: `sceKernelExtendThreadStack`, the lightweight mutexes, `sceKernelCheckThreadStack`, `sceKernelMemcpy`, and the three `sceDisplayWaitVblankStart` forms with `sceDisplayGetVcount`. None of them mentions this game; they are all things the first port's game happened not to need.
 
 ## 1. System calls the game makes that are not implemented
 
-The game imports **228 functions from 25 libraries. 71 of them have no implementation** and are bound to a logging stub that prints the call once and returns 0. A stub that returns 0 is a lie, and the game acts on it, so these are the first thing to work through.
+The game imports **228 functions from 25 libraries. 60 of them still have no implementation** and are bound to a logging stub that prints the call once and returns 0. A stub that returns 0 is a lie, and the game acts on it, so these are the first thing to work through.
 
-The two that stop the boot were implemented in the framework as part of this work: `sceKernelExtendThreadStack`, which must call the function it is given on a stack of its own — stubbing it meant `module_start` returned without ever creating the game's main thread — and the lightweight mutexes (`sceKernelCreateLwMutex` and the `Kernel_Library` lock/unlock pair).
-
-The rest, by area:
+The rest, by area. Everything implemented so far is struck from these tables.
 
 ### Blocking, or likely to be
 
 | Library | Missing | Why it matters |
 | --- | --- | --- |
-| `sceDisplay` (4 of 6) | `sceDisplayWaitVblankStart`, `…StartCB`, `…StartMultiCB`, `sceDisplayGetVcount` | The frame loop. A game that cannot wait for vblank either spins or never advances |
+| `IoFileMgrForUser` | Opening a disc device with no path, and `sceIoIoctl` | **The current blocker.** See above |
 | `ThreadManForUser` (8 of 31) | `sceKernelCreateMbx`, `DeleteMbx`, `SendMbx`, `PollMbx`, `ReceiveMbxCB`; `sceKernelWaitThreadEnd`, `…EndCB`; `sceKernelWaitSemaCB` | Mailboxes are a whole IPC primitive the framework does not have. The `…CB` variants are the callback-polling forms of waits that do exist |
 | `UtilsForUser` (3 of 7) | `sceKernelDcacheWritebackAll`, `…InvalidateAll`, `…Range` | No-ops on this host, but the game calls them before handing buffers to the GE, so they must at least return |
-| `Kernel_Library` (2 of 9) | `sceKernelMemcpy`, `sceKernelCheckThreadStack` | `sceKernelMemcpy` returning 0 without copying corrupts whatever the game expected to be copied |
 
 ### Audio
 
@@ -52,7 +63,6 @@ The rest, by area:
 | --- | --- | --- |
 | `sceUtility` (6 of 21) | The five `sceUtilityGamedataInstall*` calls, and `sceUtilityGetSystemParamString` | This game installs data to the memory stick through the shell's own dialog. The executable names `ms0:/PSP/SAVEDATA/ULES01456INST/DATAINST.BIN`, and the disc holds a 600 MB `INSDIR/DATAINST.BIN`, so this is probably on the path to a first launch |
 | `sceUmdUser` (3 of 5) | `sceUmdRegisterUMDCallBack`, `UnRegister…`, `sceUmdWaitDriveStatCB` | Disc-change callbacks |
-| `IoFileMgrForUser` (1 of 9) | `sceIoIoctl` | Used for raw disc access on the PSP; what this game asks of it is not known yet |
 | `sceImpose` (1 of 2) | `sceImposeSetUMDPopup` | Almost certainly safe to accept and ignore |
 | `scePower` (1 of 4) | `scePowerUnregisterCallback` | Same |
 | `ModuleMgrForUser` (2 of 5) | `sceKernelStopModule`, `sceKernelUnloadModule` | Only matters if the game loads a module at run time |
@@ -71,7 +81,7 @@ The VFPU words need decoding against the hardware reference before anything is i
 
 ## 3. Graphics
 
-**Not known yet.** The game has not drawn a frame, so nothing can be said about what it asks of the GE that the renderer does not provide. This section will be filled in from a run, not from reading.
+**Still not known.** The game reaches its frame loop but has not submitted a display list, because it never gets its data off the disc. Nothing can be said about what it asks of the GE until it does, and this section stays empty rather than being filled with guesses.
 
 ## 4. Save data
 
@@ -80,6 +90,6 @@ The game writes `ms0:/PSP/SAVEDATA/ULES01456/…` and `ULES01456INST/DATAINST.BI
 ## 5. Not verified at all
 
 - Anything on Linux or Windows. Everything here is macOS on Apple Silicon.
-- Speed. Nothing has run fast enough or long enough to measure.
+- Speed. The game's frame loop advances, but it draws nothing, so the numbers mean nothing yet. Guest time ran about 20,000x faster than real time in a headless run, which is what a loop with no work in it and no renderer to throttle it looks like.
 - The ad hoc product code in the profile is a guess; the game's own is not known.
 - That the game has no code overlays. The profile declares none, on the grounds that nothing has suggested otherwise, which is not the same as having looked.
