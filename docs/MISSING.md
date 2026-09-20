@@ -6,24 +6,35 @@ Platform for everything below: macOS on Apple Silicon, Vulkan through MoltenVK.
 
 ## Where the port is
 
-The game starts, loads, and runs. `module_start` runs, the game creates its threads, reaches its frame loop and advances through it, reads its data off the disc, sets up audio, and keeps going with no deadlock and no starvation. A thread dump partway in looks like a working game:
+**The game draws.** It starts, loads, runs its threads, reads its data off the disc, sets up audio, and puts its own start-up screens on the screen, correctly: the clock-frequency notice ("The clock frequency for the PSP system in use is 222 MHz"), then the memory-stick check ("Checking Memory Stick. Please do not turn off power."). Text, the rounded panel, the gradient and the 2D path all work, and a gamepad is read. Captures are not kept here, because captures made from the game's own assets do not belong in this repository.
+
+It stops on the memory-stick screen and stays there. It is not deadlocked: it runs a steady frame loop, ~25,900 frames in a bounded run, polling the pad and all four utility dialogs every frame, which is what its dialog manager does. It never touches `ms0:` at all — so it is stuck *before* the check it is telling you about.
+
+What it stops on is **a PGD-encrypted file on the disc**, and the evidence is exact:
 
 ```
-threads (virtual time 133 ms, vblanks 8):
-  uid=258  prio=0x0000003D running  pc=0x0881A250
-  uid=269  prio=0x00000043 waiting  wait=mailbox object=267 deadline=168ms pc=0x08831C8C
-  uid=280  prio=0x00000010 waiting  wait=delay   object=0   deadline=156ms pc=0x0883E554
+[io] open disc0:/sce_lbn0xec26_size0x4A0 flags=0x40000001 -> 0x00000007
+[io] ioctl fd=7 ... cmd=0x04100001 in=16 bytes:
+     31 C2 91 BB 31 AC 79 F0 71 35 18 22 21 60 D8 C8 (unhandled, returning 0)
+[io] devctl umd1: cmd=0x01F300A5 in=16 out=4 sent: 00 00 00 00 27 EC 00 00 00 00 00 00 13 00 00 00
 ```
 
-It stops on **a VFPU instruction neither the recompiler nor the interpreter can execute**:
+Reading those sectors out of the disc image says what they are: LBA `0xEC21` is an ELF, LBA `0xEC26` begins `\0PGD`, and LBA `0xEC27` is gzip. The file is opened with the encrypted-file flag and the sixteen bytes are its key; the framework implements none of that, so the ioctl returns success and a read would hand the game ciphertext. That is [TeamGDB/PortableKit#17](https://github.com/TeamGDB/PortableKit/issues/17), and it is the whole of what stands between this port and its title screen.
 
-```
-Runtime stopped: Unsupported Allegrex instruction 0xD03CA084 at 0x0882EAD4: vfpu4 not lowered yet
-```
+## What the game asks of the GE
 
-That is [TeamGDB/PortableKit#3](https://github.com/TeamGDB/PortableKit/issues/3), and it is now the blocker. Nothing has been drawn yet, so there is still nothing to screenshot.
+Now that it draws, this is answerable, and the port answers it itself: the GE reports every command it ignored at the end of a run. Over ~25,900 frames it ignored **60 distinct commands**, every one of them with a value of zero:
+
+| Commands | Times | 
+| --- | --- |
+| `0x15`, `0x16`, `0x1c`, `0x20`, `0x25`, `0x26`, `0x28`, `0x38`, `0xe8`, `0xe9` | once per frame |
+| `0x24`, `0x27` | twice per frame |
+| `0x2c`–`0x33`, `0x36`, `0x37`, `0x50`, `0xa1`–`0xaf`, `0xb9`–`0xc1`, `0xc8`, `0xca`, `0xcc`, `0xd0`, `0xd8`–`0xdd`, `0xe2`–`0xe6` | once or twice in the whole run |
+
+The shape of that is worth reading carefully before implementing anything. The long tail of once-in-the-run commands with a zero value is the game clearing state it never uses, and the per-frame group is a fixed preamble it writes every list. **Nothing here has been shown to affect what is drawn** — the screens it does draw are correct. This list is a starting point for when something draws wrongly, not a list of bugs.
 
 ### What has been implemented to get here
+
 
 Nine framework calls and two framework fixes, each one found by running the game and reading what it stopped on. None of them mentions this game:
 
@@ -35,6 +46,9 @@ Nine framework calls and two framework fixes, each one found by running the game
 | `sceKernelMemcpy` | Returning without copying corrupts what was to be copied |
 | `sceDisplayWaitVblankStart` ×3, `sceDisplayGetVcount` | Nothing paced the frame loop, so it spun |
 | Raw disc device, in sectors | The game reads `PACKFILE.BIN` straight off the disc |
+| The game-data install dialog | It polled the dialog's status for ever; it now completes (without copying, which is said aloud) |
+| The UMD and power callbacks | Registered during start-up |
+| Six instructions: `vrndi`, `vi2s`, `vt5650`, `vi2uc`, `vrndf1`, `addi` | Neither the recompiler nor the interpreter could execute them |
 | Kernel mailboxes | Created during start-up; the kernel had no such primitive |
 | `sceAudioOutput2*`, `sceAudioOutputBlocking` | The audio thread runs at priority 0x10; not blocking starved the other two |
 | User partition sized from guest RAM | The stack landed outside RAM on a 32 MiB console |
@@ -79,7 +93,7 @@ One of those is not faithful and is worth knowing about. The VFPU's random gener
 
 ## 3. Graphics
 
-**Still not known.** The game now reads its data and runs its threads, but it stops on the VFPU instruction above before submitting a display list. Nothing can be said about what it asks of the GE until it draws, and this section stays empty rather than being filled with guesses.
+Answered above, from the game's own display lists.
 
 ## 4. Save data
 
