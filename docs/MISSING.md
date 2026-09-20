@@ -6,7 +6,9 @@ Platform for everything below: macOS on Apple Silicon, Vulkan through MoltenVK.
 
 ## Where the port is
 
-**The game boots to its opening screens and loads its data.** It starts, runs its threads, reads the disc, sets up audio, draws its clock-frequency notice, takes a button press, runs its memory-stick check, and then opens and streams the files it needs. With the recompiled corpus linked it holds **30 frames per second at 100% speed**.
+**The game boots to its opening screens and loads its data.** It starts, runs its threads, reads the disc, sets up audio, draws its clock-frequency notice, takes a button press, runs its memory-stick check, and then opens and streams the files it needs. With the recompiled corpus linked its frame loop holds **30 frames per second at 100% speed**.
+
+**But only the corpus-free build draws.** Captured from the interpreter: the clock-frequency notice with its "next page" triangle, then "Checking Memory Stick. Please do not turn off power.", then a white screen it stays on while it loads. The recompiled build executes **one display list in a whole run** where the interpreter executes one per frame, so it presents nothing and its window is black. That is [PortableKit#20](https://github.com/TeamGDB/PortableKit/issues/20) and it is the thing to fix before anything else here can be judged by looking at it. An earlier note in this file said the game draws with the corpus linked; that was the frame loop running, not the drawing.
 
 It was not stuck before; it was waiting, and three things were in the way. They are worth writing down in order, because the first one cost a day and was not a missing system call at all.
 
@@ -25,7 +27,7 @@ Nobody had pressed a button. `TENKAWA_INPUT_SCRIPT="600:pad a;700:pad a"` gets p
 
 After two presses it reads the gzip stream at `sce_lbn0xec27` — the range the read-ahead asks for — re-opens the PGD file three more times, opens `sce_lbn0xec3d`, `sce_lbn0xec5b` and `sce_lbn0xed2a`, starts ATRAC through `sceAtracGetAtracID`, `sceAtracLowLevelInitDecoder` and `sceAtracLowLevelDecode`, and streams `sce_lbn0x3eb50_size0x13E790` in 608-byte pieces for as long as it is left running. The three ATRAC calls are logging stubs, so it is being fed silence.
 
-**Not verified:** what is on the screen after the notice. Frame capture wrote nothing in any run on this machine — `capture_frame` reports it cannot capture, and the window capture produces no file either — and it does the same on the framework commit before this work, so it is not caused by it. Everything above is read from the I/O trace and from the game's own code, not from a picture. Somebody with a working capture should look.
+**Not verified:** whether it ever leaves the white screen. Under the interpreter the load runs about twenty times slower than the game expects, and the recompiled build, which would load it in seconds, draws nothing ([PortableKit#20](https://github.com/TeamGDB/PortableKit/issues/20)). What the white screen becomes is unknown.
 
 ## What the game asks of the GE
 
