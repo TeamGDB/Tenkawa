@@ -26,7 +26,7 @@ Five calls were implemented in the framework to get this far, each one found by 
 
 The game imports **228 functions from 25 libraries. 60 of them still have no implementation** and are bound to a logging stub that prints the call once and returns 0. A stub that returns 0 is a lie, and the game acts on it, so these are the first thing to work through.
 
-The rest, by area. Everything implemented so far is struck from these tables.
+The rest, by area. What has been implemented has been taken out of these tables, so what is left is what is left.
 
 ### Blocking, or likely to be
 
