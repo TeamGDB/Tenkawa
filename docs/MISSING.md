@@ -42,47 +42,23 @@ Nine framework calls and two framework fixes, each one found by running the game
 
 ## 1. System calls the game makes that are not implemented
 
-The game imports **228 functions from 25 libraries. 49 of them still have no implementation** and are bound to a logging stub that prints the call once and returns 0. A stub that returns 0 is a lie, and the game acts on it, so these are the first thing to work through.
+**45 of the 228 imports**, and this is the executable's own answer, not an inference from reading the framework's source: run the port with `TENKAWA_LIST_STUBS=1` and it prints exactly this. Each one is bound to a logging stub that prints the call once and returns 0, and a stub that returns 0 is a lie the game acts on.
 
-The rest, by area. What has been implemented has been taken out of these tables, so what is left is what is left.
-
-### Blocking, or likely to be
-
-| Library | Missing | Why it matters |
+| Library | Missing | Notes |
 | --- | --- | --- |
-| `ThreadManForUser` (3 of 31) | `sceKernelWaitThreadEnd`, `…EndCB`, `sceKernelWaitSemaCB` | The callback-polling forms of waits that do exist |
-| `UtilsForUser` (3 of 7) | `sceKernelDcacheWritebackAll`, `…InvalidateAll`, `…Range` | No-ops on this host, but the game calls them before handing buffers to the GE, so they must at least return |
+| `sceNetAdhocMatching` (11 of 11) | `Init`, `Term`, `Create`, `Delete`, `Start`, `Stop`, `SelectTarget`, `CancelTargetWithOpt`, `SetHelloOpt`, `SendData`, `AbortSendData` | The whole peer-matching library. The first port's game did its own matchmaking over `sceNetAdhocctl` and never touched it. [PortableKit#9](https://github.com/TeamGDB/PortableKit/issues/9) |
+| `sceSasCore` (9 of 27) | `__sceSasSetADSR`, `SetADSRmode`, `SetSL`, `SetGrain`, `GetGrain`, `SetNoise`, `SetOutputmode`, `GetAllEnvelopeHeights`, `GetPauseFlag` | The mixer's envelope, grain and noise control. The game calls `GetAllEnvelopeHeights` during start-up. [PortableKit#7](https://github.com/TeamGDB/PortableKit/issues/7) |
+| `sceUtility` (6 of 21) | The five `sceUtilityGamedataInstall*` calls, and `sceUtilityGetSystemParamString` | The shell's data-install dialog. [PortableKit#10](https://github.com/TeamGDB/PortableKit/issues/10) |
+| `sceAtrac3plus` (4 of 5) | `sceAtracLowLevelInitDecoder`, `sceAtracLowLevelDecode`, `sceAtracGetAtracID`, `sceAtracReinit` | This game feeds the decoder raw frames rather than handing it a file. It calls `sceAtracReinit` during start-up. [PortableKit#8](https://github.com/TeamGDB/PortableKit/issues/8) |
+| `sceNetAdhocctl` (4 of 12) | `Connect`, `Join`, `GetState`, `GetPeerInfo` | Joining and creating a group |
+| `ThreadManForUser` (3 of 31) | `sceKernelWaitSemaCB`, `sceKernelWaitThreadEnd`, `sceKernelWaitThreadEndCB` | The callback-polling forms of waits that do exist |
+| `sceUmdUser` (3 of 5) | `sceUmdRegisterUMDCallBack`, `UnRegister…`, `sceUmdWaitDriveStatCB` | Disc-change callbacks. The game registers one during start-up |
+| `sceMpeg` (2 of 23) | `sceMpegAvcDecode`, `sceMpegAvcDecodeStop` | AVC video decode proper |
 | `IoFileMgrForUser` (1 of 9) | `sceIoIoctl` | The other half of raw UMD access. Not reached yet |
-
-### Audio
-
-| Library | Missing | Notes |
-| --- | --- | --- |
-| `sceSasCore` (13 of 27) | `__sceSasSetADSR`, `SetADSRmode`, `SetSL`, `GetEnvelopeHeight`, `GetAllEnvelopeHeights`, `SetGrain`, `GetGrain`, `SetNoise`, `SetOutputmode`, `SetVoicePCM`, `SetPause`, `GetPauseFlag`, `CoreWithMix`, and the four `__sceSasRev*` reverb calls | The mixer's envelope, grain, noise and reverb control. The first port never used them; this game drives all of it |
-| `sceAtrac3plus` (4 of 5) | `sceAtracLowLevelInitDecoder`, `sceAtracLowLevelDecode`, `sceAtracGetAtracID`, `sceAtracReinit` | This game feeds the decoder raw frames itself instead of handing it a file, which is a different path through ATRAC3 than the one that exists |
-
-### Video
-
-| Library | Missing | Notes |
-| --- | --- | --- |
-| `sceMpeg` (4 of 23) | `sceMpegInit`, `sceMpegFinish`, `sceMpegAvcDecode`, `sceMpegAvcDecodeStop` | The framework demuxes and decodes audio but leaves AVC video to a different call than this game uses |
-
-### Multiplayer
-
-| Library | Missing | Notes |
-| --- | --- | --- |
-| `sceNetAdhocMatching` (11 of 11) | The entire library: `Init`, `Term`, `Create`, `Delete`, `Start`, `Stop`, `SelectTarget`, `CancelTargetWithOpt`, `SetHelloOpt`, `SendData`, `AbortSendData` | Peer matching. The first port's game did its own matchmaking over `sceNetAdhocctl` and never touched this |
-| `sceNetAdhocctl` (4 of 12) | `sceNetAdhocctlConnect`, `Join`, `GetState`, `GetPeerInfo` | Joining and creating a group, and reading its state |
-
-### Save data and shell
-
-| Library | Missing | Notes |
-| --- | --- | --- |
-| `sceUtility` (6 of 21) | The five `sceUtilityGamedataInstall*` calls, and `sceUtilityGetSystemParamString` | This game installs data to the memory stick through the shell's own dialog. The executable names `ms0:/PSP/SAVEDATA/ULES01456INST/DATAINST.BIN`, and the disc holds a 600 MB `INSDIR/DATAINST.BIN`, so this is probably on the path to a first launch |
-| `sceUmdUser` (3 of 5) | `sceUmdRegisterUMDCallBack`, `UnRegister…`, `sceUmdWaitDriveStatCB` | Disc-change callbacks |
-| `sceImpose` (1 of 2) | `sceImposeSetUMDPopup` | Almost certainly safe to accept and ignore |
+| `sceImpose` (1 of 2) | `sceImposeSetUMDPopup` | Called during start-up and the game carries on regardless |
 | `scePower` (1 of 4) | `scePowerUnregisterCallback` | Same |
-| `ModuleMgrForUser` (2 of 5) | `sceKernelStopModule`, `sceKernelUnloadModule` | Only matters if the game loads a module at run time |
+
+Of these, only four are known to be called at all so far: `sceImposeSetUMDPopup`, `sceUmdRegisterUMDCallBack`, `sceAtracReinit` and `__sceSasGetAllEnvelopeHeights`. The rest are what the executable imports, which is not the same as what it uses.
 
 ## 2. The recompiler
 
