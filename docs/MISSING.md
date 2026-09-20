@@ -8,7 +8,9 @@ Platform for everything below: macOS on Apple Silicon, Vulkan through MoltenVK.
 
 **The game draws.** It starts, loads, runs its threads, reads its data off the disc, sets up audio, and puts its own start-up screens on the screen, correctly: the clock-frequency notice ("The clock frequency for the PSP system in use is 222 MHz"), then the memory-stick check ("Checking Memory Stick. Please do not turn off power."). Text, the rounded panel, the gradient and the 2D path all work, and a gamepad is read. Captures are not kept here, because captures made from the game's own assets do not belong in this repository.
 
-It stops on the memory-stick screen and stays there. It is not deadlocked: it runs a steady frame loop, ~25,900 frames in a bounded run, polling the pad and all four utility dialogs every frame, which is what its dialog manager does. It never touches `ms0:` at all — so it is stuck *before* the check it is telling you about.
+It stops on the memory-stick screen and stays there. It is not deadlocked and it is not slow: with the recompiled corpus linked it holds **30 frames per second at 100% speed, 0.9 ms of guest time per frame**, polling the pad and all four utility dialogs every frame, which is what its dialog manager does. It never touches `ms0:` at all — so it is stuck *before* the check it is telling you about.
+
+The interpreter reaches exactly the same place, which is worth knowing: everything below was found without waiting for the recompile.
 
 What it stops on is **a PGD-encrypted file on the disc**, and the evidence is exact:
 
