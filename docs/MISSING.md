@@ -6,11 +6,21 @@ Platform for everything below: macOS on Apple Silicon, Vulkan through MoltenVK.
 
 ## Where the port is
 
-**The game boots to its opening screens and loads its data.** It starts, runs its threads, reads the disc, sets up audio, draws its clock-frequency notice, takes a button press, runs its memory-stick check, and then opens and streams the files it needs. With the recompiled corpus linked its frame loop holds **30 frames per second at 100% speed**.
+**The recompiled build plays into story mode.** With PortableKit's recompiler fix for calls to import stubs in the same unit ([PortableKit#29](https://github.com/TeamGDB/PortableKit/pull/29)) and three more framework fixes ([PortableKit#30](https://github.com/TeamGDB/PortableKit/pull/30)), a scripted run of the recompiled build goes: publisher logos → the title, **with music** → New Game → the player name (the framework's keyboard) → the first save, written to `ms0:/PSP/SAVEDATA/ULES01456DAT0` → the main menu → Dragon Walker → the first stage: story text, the 3D world map with Goku and Raditz, dialogue and the mission tutorial. 60 frames a second in the menus, 30 in the stage, at 100% speed, muted, on macOS on Apple Silicon. Captures were looked at; none are kept here.
 
-**It reaches its title screen.** Captured from the corpus-free build, in order: the clock-frequency notice with its "next page" triangle, "Checking Memory Stick. Please do not turn off power." after the confirm button, a white screen while it loads, and then the title — the logo, the four characters, the dragon balls, the two copyright lines and a blinking "Press START button". Everything on it is drawn correctly: gradients, outlined text, the alpha on the blinking prompt. No captures are kept in this repository, because they are made from the game's own art.
+What was in the way, in order:
 
-**Only the corpus-free build draws.** The recompiled build executes **one display list in a whole run** where the interpreter executes one per frame, so it presents nothing and its window is black. That is [PortableKit#20](https://github.com/TeamGDB/PortableKit/issues/20) and it is the thing to fix before anything else here can be judged by looking at it. An earlier note in this file said the game draws with the corpus linked; that was the frame loop running, not the drawing.
+| What | Why |
+| --- | --- |
+| A JAL to an import stub in the same generated unit ran the stub's placeholder `jr ra` ([PortableKit#29](https://github.com/TeamGDB/PortableKit/pull/29), found on another port) | The recompiled build called `sceGeListEnQueue` once in a whole run and drew nothing, while the interpreter drew every frame. This was the "only the corpus-free build draws" problem |
+| `sceAtracLowLevelInitDecoder`, `sceAtracLowLevelDecode` | All music and voices go through them (ATRAC3, stereo 304-byte and mono 152-byte frames). Silent before, and the silence let fast loading run the title at 8 times real time |
+| `sceDisplayWaitVblankStartMultiCB` waiting one vblank for any count | The game waits two at a time while it loads a stage |
+| `__sceSasGetAllEnvelopeHeights`, `__sceSasGetPauseFlag` | Called every frame; the stub wrote nothing into the game's buffer |
+| The scratchpad at `0x00010000` | Not mapped; the game stores quadwords there as a stage starts (`0x089B2B3C`), and stopped there, under the interpreter too |
+
+**Not verified:** a fight (the script has not reached one yet); how the sound sounds; anything after the mission tutorial; other platforms.
+
+### Before this, from the corpus-free build
 
 It was not stuck before; it was waiting, and three things were in the way. They are worth writing down in order, because the first one cost a day and was not a missing system call at all.
 
